@@ -1,0 +1,104 @@
+version: "3"
+
+services:
+  # RabbitMQ Service
+  rabbitmq:
+    platform: linux/arm64
+    image: rabbitmq:management-alpine
+    container_name: ft_mcs_rabbitmq
+    tty: true
+    environment:
+      RABBITMQ_DEFAULT_USER: "mikelopster"
+      RABBITMQ_DEFAULT_PASS: "password"
+    ports:
+      - "15672:15672" # RabbitMQ management
+      - "5672:5672"   # RabbitMQ message broker
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - ft_mcs_network
+
+  # PostgreSQL Database
+  ft_mcs_db:
+    image: postgres:16
+    container_name: ft_mcs_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"   # PostgreSQL database port
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ft_mcs_network
+
+  # PgAdmin for PostgreSQL management
+  ft_mcs_pgadmin:
+    image: dpage/pgadmin4
+    container_name: ft_mcs_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "8081:80"  # PgAdmin interface port
+    depends_on:
+      - ft_mcs_db
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - ft_mcs_network
+
+  # Gateway Service (Authentication, JWT handling)
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile.dev # Use the correct Dockerfile path
+    container_name: ft_mcs_gateway
+    image: ft_mcs_gateway:0.1
+    volumes:
+      - ./gateway:/rails # Mount the gateway directory to /rails
+    working_dir: /rails  # Set working directory to /rails
+    environment:
+      RABBITMQ_URL: "amqp://mikelopster:password@ft_mcs_rabbitmq:5672"
+    depends_on:
+      - rabbitmq
+      - ft_mcs_db
+    ports:
+      - "3000:3000"   # Gateway exposed on port 3000
+    command: bash -c "bundle exec rake db:create && bundle exec rake db:migrate && ./bin/rails server -b 0.0.0.0 -p 3000"
+    networks:
+      - ft_mcs_network
+
+  # Backend Service (Main movie application logic)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev # Use the correct Dockerfile path
+    container_name: ft_mcs_backend
+    image: ft_mcs_backend:0.1
+    volumes:
+      - ./backend:/rails # Mount the backend directory to /rails
+    working_dir: /rails  # Set working directory to /rails
+    environment:
+      RABBITMQ_URL: "amqp://mikelopster:password@ft_mcs_rabbitmq:5672"
+    depends_on:
+      - rabbitmq
+      - ft_mcs_db
+    ports:
+      - "3001:3000"   # Backend exposed on port 3001
+    command: bash -c "bundle exec rake db:create && bundle exec rake db:migrate && ./bin/rails server -b 0.0.0.0 -p 3000"
+    networks:
+      - ft_mcs_network
+
+volumes:
+  rabbitmq_data:
+    driver: local
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  ft_mcs_network:
+    external: true
